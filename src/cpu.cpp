@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <filesystem>
 #include <SDL2/SDL.h>
+#include <cstdlib>
 
 void Cpu::mem_write(uint16_t ptr, uint8_t value) {
     this->state.ram[ptr] = value;
@@ -34,6 +35,31 @@ Cpu::Cpu() {
             this->state.video[x][y] = false;
         }
     }
+
+    // load font
+    unsigned char chip8_fontset[80] =
+    {
+            0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
+            0x20, 0x60, 0x20, 0x20, 0x70, // 1
+            0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
+            0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
+            0x90, 0x90, 0xF0, 0x10, 0x10, // 4
+            0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
+            0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
+            0xF0, 0x10, 0x20, 0x40, 0x40, // 7
+            0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
+            0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
+            0xF0, 0x90, 0xF0, 0x90, 0x90, // A
+            0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
+            0xF0, 0x80, 0x80, 0x80, 0xF0, // C
+            0xE0, 0x90, 0x90, 0x90, 0xE0, // D
+            0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
+            0xF0, 0x80, 0xF0, 0x80, 0x80  // F
+    };
+
+    for (int i = 0; i < 80; i++) {
+        this->state.ram[0x50 + i] = chip8_fontset[i];
+    }
 }
 
 
@@ -46,6 +72,65 @@ void Cpu::load_rom(char *path) {
     this->state.pc = 0x200;
 }
 
+// keyboard layout:
+
+// 1 2 3 4
+// Q W E R
+// A S D F
+// Z X C V
+
+uint8_t keysym_to_index(SDL_Keysym keysym) {
+    switch (keysym.sym) {
+        case SDLK_1:
+            return 0x1;
+        case SDLK_2:
+            return 0x2;
+        case SDLK_3:
+            return 0x3;
+        case SDLK_4:
+            return 0xc;
+        
+        case SDLK_q:
+            return 0x4;
+        case SDLK_w:
+            return 0x5;
+        case SDLK_e:
+            return 0x6;
+        case SDLK_r:
+            return 0xd;
+        
+        case SDLK_a:
+            return 0x7;
+        case SDLK_s:
+            return 0x8;
+        case SDLK_d:
+            return 0x9;
+        case SDLK_f:
+            return 0xe;
+        
+        case SDLK_z:
+            return 0xa;
+        case SDLK_x:
+            return 0x0;
+        case SDLK_c:
+            return 0xb;
+        case SDLK_v:
+            return 0xf;
+        
+        default:
+            return 0xff;
+    }
+}
+
+bool isKeyPressed(bool keys[0x10]) {
+    for (int i = 0; i < 0x10; i++) {
+        if (keys[i])
+            return true;
+    }
+
+    return false;
+}
+
 void Cpu::run(SDL_Renderer *renderer) {
 
     bool isFinished = false;
@@ -53,6 +138,9 @@ void Cpu::run(SDL_Renderer *renderer) {
     uint64_t instruction_count = 0;
 
     SDL_Event event;
+
+    // variable for keyboard
+    bool keys[0x10] = {false};
     
 
     while (!isFinished) {
@@ -61,22 +149,14 @@ void Cpu::run(SDL_Renderer *renderer) {
         uint16_t opcode = this->mem_read_u16(this->state.pc);
         this->state.pc += 2;
 
+        //  uncomment for single stepping
+        // std::cout << "0x" << std::hex << opcode;
+        // getchar();
+
         uint8_t opcode_n3 = opcode & 0xf;
         uint8_t opcode_n2 = (opcode >> 4) & 0xf;
         uint8_t opcode_n1 = (opcode >> 8) & 0xf;
         uint8_t opcode_n0 = (opcode >> 12) & 0xf;
-
-        // not implemented instructions:
-
-        // Bnnn - JP V0, addr
-        // Cxkk - RND Vx, byte
-        // Ex9E - SKP Vx
-        // ExA1 - SKNP Vx
-        // Fx0A - LD Vx, K
-        // Fx29 - LD F, Vx
-        // Fx33 - LD B, Vx
-        // Fx55 - LD [I], Vx
-        // Fx65 - LD Vx, [I]
 
         switch (opcode_n0) {
             case 0x0: {
@@ -228,6 +308,16 @@ void Cpu::run(SDL_Renderer *renderer) {
                 this->state.l = opcode & 0xfff;
                 break;
             }
+            case 0xb: {
+                // Bnnn - JP V0, addr
+                this->state.pc = (opcode & 0xfff) + this->state.regs[0x0];
+                break;
+            }
+            case 0xc: {
+                // Cxkk - RND Vx, byte
+                this->state.regs[opcode_n1] = (uint8_t)(rand() & (opcode & 0xff));
+                break;
+            }
             case 0xd: {
                 // DXYN
                 uint8_t x_base = this->state.regs[opcode_n1] % 64;
@@ -256,21 +346,62 @@ void Cpu::run(SDL_Renderer *renderer) {
 
                 break;
             }
+            case 0xe: {
+                switch (opcode & 0xff) {
+                    case 0x9e: {
+                        // Ex9E - SKP Vx
+                        uint8_t index = this->state.regs[opcode_n1] & 0xf;
+                        if (keys[index])
+                            this->state.pc += 2;
+                        break;
+                    }
+                    case 0xa1: {
+                        // ExA1 - SKNP Vx
+                        uint8_t index = this->state.regs[opcode_n1] & 0xf;
+                        if (!keys[index])
+                            this->state.pc += 2;
+                        break;
+                    }
+                }
+                break;
+            }
             case 0xf: {
+
                 switch (opcode & 0xff) { 
                     case 0x7: {
+                        // LD Vx, DT
                         this->state.regs[opcode_n1] = this->state.delay_timer;
                         break;
                     }
+                    case 0xa: {
+                        // LD Vx, K
+                        // wait until key is pressed
+                        // when the key is pressed, put it into Vx
+
+                        if (isKeyPressed(keys)) {
+                            for (int i = 0; i < 0x10; i++) {
+                                if (keys[i]) {
+                                    this->state.regs[opcode_n1] = i;
+                                }
+                            }
+                        } else {
+                            // decrement pc to hit this instruction again
+                            this->state.pc -= 2;
+                        }
+                        break;
+                    }
                     case 0x15: {
+                        // LD DT, Vx
                         this->state.delay_timer = this->state.regs[opcode_n1];
                         break;
                     }
                     case 0x18: {
+                        // LD ST, Vx
                         this->state.sound_timer = this->state.regs[opcode_n1];
                         break;
                     }
                     case 0x1e: {
+                        // ADD I, Vx
                         this->state.l += this->state.regs[opcode_n1];
 
                         if (this->state.l > 0xfff) {
@@ -282,11 +413,38 @@ void Cpu::run(SDL_Renderer *renderer) {
                         this->state.l &= 0xfff;
                         break;
                     }
+                    case 0x29: {
+                        // LD F, Vx
+                        this->state.l = 0x50 + (opcode & 0xff) * 5;
+                        break;
+                    }
                     case 0x33: {
+                        // Fx33 - LD B, Vx
                         // Binary-coded decimal conversion
+
                         this->state.ram[this->state.l + 0] = this->state.regs[opcode_n1] / 100;
                         this->state.ram[this->state.l + 1] = (this->state.regs[opcode_n1] / 10) % 10;
                         this->state.ram[this->state.l + 2] = this->state.regs[opcode_n1] % 10;
+
+                        break;
+                    }
+                    case 0x55: {
+                        // LD [I], Vx
+
+                        for (int i = 0; i <= opcode_n1; i++) {
+                            this->state.ram[this->state.l + i] = this->state.regs[i];
+                        }
+
+                        break;
+                    }
+                    case 0x65: {
+                        // LD Vx, [I]
+
+                        for (int i = 0; i <= opcode_n1; i++) {
+                            this->state.regs[i] = this->state.ram[this->state.l + i];
+                        }
+
+                        break;
                     }
                 }
                 break;
@@ -307,7 +465,7 @@ void Cpu::run(SDL_Renderer *renderer) {
                 this->state.sound_timer--;
         }
 
-        if (update_video) {
+        if (update_video || instruction_count % 0x100 == 0) {
             // video array has changed => update window
 
             SDL_RenderClear(renderer);
@@ -337,14 +495,30 @@ void Cpu::run(SDL_Renderer *renderer) {
             update_video = false;
         }
 
-        SDL_PollEvent(&event);
+        while(SDL_PollEvent(&event)) {
+            switch (event.type) {
+                case SDL_QUIT:
+                    isFinished = true;
+                    break;
+                case SDL_KEYDOWN: {
+                    uint8_t index = keysym_to_index(event.key.keysym);
 
-        switch (event.type) {
-            case SDL_QUIT:
-                isFinished = true;
-                break;
-            default:
-                break;
+                    if (index < 0x10) {
+                        keys[index] = true;
+                    }
+                    
+                    break;
+                }
+                case SDL_KEYUP: {
+                    uint8_t index = keysym_to_index(event.key.keysym);
+
+                    if (index < 0x10) {
+                        keys[index] = false;
+                    }
+
+                    break;
+                }
+            }
         }
 
         SDL_Delay(1);
