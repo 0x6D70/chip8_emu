@@ -4,7 +4,7 @@
 #include <stack>
 #include <SDL2/SDL.h>
 
-#define VIDEO_MULTI  10
+#define VIDEO_MULTI  20
 #define VIDEO_WIDTH  64
 #define VIDEO_HEIGHT 32
 
